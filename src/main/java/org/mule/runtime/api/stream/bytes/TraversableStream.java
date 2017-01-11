@@ -101,7 +101,7 @@ public class TraversableStream extends InputStream {
    */
   public CursorStream openCursor() {
     checkState(!closed, "Cannot open a new cursor on a closed stream");
-    CursorStream cursor = new BufferedCursorStream(bufferSupplier.get(), this::onCursorClose);
+    CursorStream cursor = new BufferedCursorStream(bufferSupplier.get(), this::onCursorClose, bufferSize);
     cursors.add(cursor);
 
     return cursor;

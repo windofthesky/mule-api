@@ -9,6 +9,7 @@ package org.mule.runtime.internal.stream.bytes;
 import org.mule.runtime.api.stream.bytes.CursorStream;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.function.Consumer;
 
 /**
@@ -19,20 +20,25 @@ import java.util.function.Consumer;
  */
 public final class BufferedCursorStream extends CursorStream {
 
-  private final TraversableBuffer buffer;
+  private final TraversableBuffer traversableBuffer;
   private final Consumer<CursorStream> closeCallback;
   private boolean closed = false;
 
+  private final int bufferSize;
   private long position = 0;
+  private final ByteBuffer localBuffer;
 
   /**
    * Creates a new instance
-   * @param buffer the buffer which provides data
+   * @param traversableBuffer the buffer which provides data
    * @param closeCallback A callback to be invoked when the {@link #close()} method is called
    */
-  public BufferedCursorStream(TraversableBuffer buffer, Consumer<CursorStream> closeCallback) {
-    this.buffer = buffer;
+  public BufferedCursorStream(TraversableBuffer traversableBuffer, Consumer<CursorStream> closeCallback, int bufferSize) {
+    this.traversableBuffer = traversableBuffer;
     this.closeCallback = closeCallback;
+    this.bufferSize = bufferSize;
+    localBuffer = ByteBuffer.allocate(bufferSize);
+    localBuffer.flip();
   }
 
   /**
@@ -50,6 +56,8 @@ public final class BufferedCursorStream extends CursorStream {
   public void seek(long position) throws IOException {
     assertNotClosed();
     this.position = position;
+    localBuffer.clear();
+    localBuffer.flip();
   }
 
   /**
@@ -58,10 +66,13 @@ public final class BufferedCursorStream extends CursorStream {
   @Override
   public int read() throws IOException {
     assertNotClosed();
+    if (reloadLocalBufferIfEmpty() > 0) {
+      int read = unsigned((int) localBuffer.get());
+      position++;
+      return read;
+    }
 
-    byte[] data = new byte[1];
-    int read = buffer.get(data, position++, 1, 0);
-    return read == -1 ? -1 : unsigned((int) data[0]);
+    return -1;
   }
 
   /**
@@ -78,12 +89,46 @@ public final class BufferedCursorStream extends CursorStream {
   @Override
   public int read(byte[] b, int off, int len) throws IOException {
     assertNotClosed();
+    return readInto(b, off, len);
+  }
 
-    int read = buffer.get(b, position, len, off);
-    if (read > 0) {
-      position += read;
+  private int readInto(byte[] b, int off, int len) throws IOException {
+    int read = 0;
+    while (true) {
+      int remaining = reloadLocalBufferIfEmpty();
+      if (remaining == -1) {
+        return read == 0 ? -1 : read;
+      }
+
+      if (len <= remaining) {
+        localBuffer.get(b, off, len);
+        position += len;
+        return len;
+      } else {
+        localBuffer.get(b, off, remaining);
+        position += remaining;
+        read += remaining;
+        off += remaining;
+        len -= remaining;
+      }
     }
-    return read;
+  }
+
+  private int reloadLocalBufferIfEmpty() {
+    if (!localBuffer.hasRemaining()) {
+      localBuffer.clear();
+      byte[] bytes = new byte[bufferSize];
+      int read = traversableBuffer.get(bytes, position, bufferSize, 0);
+      if (read > 0) {
+        localBuffer.put(bytes, 0, read);
+        localBuffer.flip();
+        return read;
+      } else {
+        return -1;
+      }
+    }
+
+    return localBuffer.remaining();
   }
 
   /**

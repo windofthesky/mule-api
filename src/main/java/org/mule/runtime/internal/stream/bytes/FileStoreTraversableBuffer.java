@@ -26,6 +26,7 @@ import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -179,6 +180,19 @@ public final class FileStoreTraversableBuffer extends BaseTraversableBuffer {
     deleteAsync(bufferFile);
   }
 
+  private <T> T withFileLock(Callable<T> callable) throws IOException {
+    fileStoreLock.lock();
+    try {
+      return callable.call();
+    } catch (IOException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new MuleRuntimeException(e);
+    } finally {
+      fileStoreLock.unlock();
+    }
+  }
+
   private int reloadBuffer() throws IOException {
     if (streamFullyConsumed) {
       return -1;
@@ -186,22 +200,17 @@ public final class FileStoreTraversableBuffer extends BaseTraversableBuffer {
 
     int result;
     buffer.clear();
-    fileStoreLock.lock();
-    try {
-      result = fileStore.getChannel().read(buffer);
-      if (result < 0) {
-        result = streamChannel.read(buffer);
-        if (result >= 0) {
-          //Put the cursor at the end
-          buffer.flip();
-          fileStore.getChannel().write(buffer);
-          bufferRange = bufferRange.advance(result);
-        } else {
-          streamFullyConsumed = true;
-        }
+    result = withFileLock(() -> fileStore.getChannel().read(buffer));
+    if (result < 0) {
+      result = streamChannel.read(buffer);
+      if (result >= 0) {
+        //Put the cursor at the end
+        buffer.flip();
+        withFileLock(() -> fileStore.getChannel().write(buffer));
+        bufferRange = bufferRange.advance(result);
+      } else {
+        streamFullyConsumed = true;
       }
-    } finally {
-      fileStoreLock.unlock();
     }
 
     buffer.flip();
