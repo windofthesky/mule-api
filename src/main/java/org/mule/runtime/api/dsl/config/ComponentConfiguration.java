@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import javax.xml.namespace.QName;
+
 /**
  * Defines a mule component configuration content.
  * <p>
@@ -24,6 +26,8 @@ import java.util.Optional;
  * @since 1.0
  */
 public class ComponentConfiguration {
+
+  public static QName ANNOTATION_PARAMETERS = new QName("config", "componentParameters");
 
   private ComponentIdentifier identifier;
   private Map<String, String> parameters = new HashMap<>();
